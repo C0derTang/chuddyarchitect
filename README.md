@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chuddy Architect
 
-## Getting Started
+Walk through a house with your phone camera → photorealistic 3D model (Gaussian Splatting) → author and render **artificial drone shots** through the space.
 
-First, run the development server:
+## How it works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+Phone video ──upload──> Next.js app (Vercel)
+                          │  Vercel Blob (video + results)
+                          │  Neon Postgres (projects/jobs)
+                          ▼
+              FarmShare worker (polls the app's API)
+                ffmpeg frames → COLMAP → ns-train splatfacto
+                → export splat → compress → upload
+                          ▼
+              Browser viewer + drone-path editor
+                → instant WebM recording in the browser
+                → or queue a high-quality MP4 render on FarmShare
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- `app/`, `components/`, `lib/` — the Next.js web app
+- `worker/` — Python + Slurm scripts you run on Stanford FarmShare
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quick start (local, no credentials)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+node scripts/generate-demo-splat.mjs   # creates public/demo.ply
+npm run dev
+```
 
-## Learn More
+Open http://localhost:3000/demo — a synthetic room splat loads and you can try the full drone-path editor: orbit around, **+ Keyframe** a few shots, **Preview flight**, **Record drone shot (WebM)**.
 
-To learn more about Next.js, take a look at the following resources:
+With no `DATABASE_URL` / `BLOB_READ_WRITE_TOKEN` set, the app stores data in `.data/` (JSON + files), so uploads and the whole project flow work locally too.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Recording a good walkthrough video
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Move **slowly**; avoid fast pans (motion blur kills COLMAP).
+- Landscape orientation, good lighting, 1–3 minutes, 1080p is plenty.
+- Overlap your path — walk a loop, revisit doorways from both sides.
+- Featureless white walls are hard; keep furniture/edges in frame.
 
-## Deploy on Vercel
+## Production deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Deploy this repo to Vercel (`vercel deploy` or Git integration).
+2. Add a **Blob store** (Storage tab) — sets `BLOB_READ_WRITE_TOKEN`.
+3. Add **Neon Postgres** via the Vercel Marketplace — sets `DATABASE_URL`.
+4. Set `WORKER_TOKEN` to a long random string (e.g. `openssl rand -hex 32`).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## FarmShare worker
+
+```bash
+ssh <sunetid>@rice.stanford.edu
+git clone <this repo> chuddyarchitect && cd chuddyarchitect/worker
+bash setup.sh                 # one-time: micromamba + COLMAP + nerfstudio
+vi .env                       # API_URL + WORKER_TOKEN
+sbatch train.sbatch           # drains queued jobs on a GPU node (L40S)
+squeue -u $USER               # watch; logs land in worker/logs/<jobid>.out
+```
+
+Training takes ~30–60 min per video on an L40S. Trained artifacts persist in `~/chuddy-work/<project-id>/`, so drone-shot render jobs (also drained by `train.sbatch`) can run any time later.
+
+## Drone shots
+
+Open a ready project → frame a shot → **+ Keyframe** (4–8 of them) → set duration:
+
+- **Record drone shot (WebM)** — instant, rendered in your browser at viewer quality.
+- **Render high-quality MP4 (FarmShare)** — queues a `ns-render camera-path` job at 1080p with full model quality; run `sbatch train.sbatch` again to process it, then download from the project page.
+
+If a scene loads tilted, use the **Up axis** selector in the panel (nerfstudio scenes are usually +Z up).
+
+## Notes / known limits
+
+- Personal MVP: no auth on the UI; worker API is protected by `WORKER_TOKEN`.
+- `ns-render` interprets the camera path in the model's own coordinate space — the same space the web viewer displays — so paths authored in the viewer line up. If a server render comes out mis-oriented, check the exported `camera-path.json` against `ns-viewer` output for the same scene.
+- Splats are compressed to PlayCanvas compressed PLY (~15–20× smaller) before upload; the viewer reads them natively. Raw PLY is the fallback.
