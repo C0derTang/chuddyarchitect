@@ -29,7 +29,9 @@ node scripts/generate-demo-splat.mjs   # creates public/demo.ply
 npm run dev
 ```
 
-Open http://localhost:3000/demo — a synthetic room splat loads and you can try the full drone-path editor: orbit around, **+ Keyframe** a few shots, **Preview flight**, **Record drone shot (WebM)**.
+Open http://localhost:3000/demo — a synthetic room splat loads and you can try the full drone-path editor: fly around, **+ Keyframe** a few shots, **Preview flight**, **Record drone shot (WebM)**.
+
+**Flying**: click the scene to capture the mouse (Esc releases it). Mouse = pitch/yaw, `W/S` forward/back, `A/D` strafe, `Q/E` down/up, `Shift` boost, scroll wheel adjusts speed. Movement has smooth acceleration for drone-like motion.
 
 With no `DATABASE_URL` / `BLOB_READ_WRITE_TOKEN` set, the app stores data in `.data/` (JSON + files), so uploads and the whole project flow work locally too.
 

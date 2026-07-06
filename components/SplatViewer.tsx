@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { FlyControls } from "./FlyControls";
 
 interface Keyframe {
   position: [number, number, number];
@@ -17,7 +18,6 @@ interface Props {
 // Minimal structural typings for @mkkellogg/gaussian-splats-3d (no bundled types).
 interface GsViewer {
   camera: THREE.PerspectiveCamera;
-  controls: { enabled: boolean; target: THREE.Vector3; update: () => void };
   renderer: THREE.WebGLRenderer;
   addSplatScene: (url: string, opts: Record<string, unknown>) => Promise<void>;
   start: () => void;
@@ -27,6 +27,7 @@ interface GsViewer {
 export default function SplatViewer({ splatUrl, projectId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<GsViewer | null>(null);
+  const flyRef = useRef<FlyControls | null>(null);
   const playbackRef = useRef<{ raf: number; cancel: () => void } | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -52,6 +53,7 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
         initialCameraPosition: [0.8, 1.7, 2.6],
         initialCameraLookAt: [-0.5, 0.9, -1.5],
         selfDrivenMode: true,
+        useBuiltInControls: false,
       }) as unknown as GsViewer;
       viewerRef.current = viewer;
       try {
@@ -61,6 +63,10 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
         });
         if (disposed) return;
         viewer.start();
+        // without built-in controls the lookAt option isn't applied; set pose explicitly
+        viewer.camera.position.set(0.8, 1.7, 2.6);
+        viewer.camera.lookAt(-0.5, 0.9, -1.5);
+        flyRef.current = new FlyControls(viewer.camera, containerRef.current!);
         setLoading(false);
       } catch (err) {
         if (!disposed) setLoadError((err as Error).message ?? String(err));
@@ -69,6 +75,8 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
     return () => {
       disposed = true;
       playbackRef.current?.cancel();
+      flyRef.current?.dispose();
+      flyRef.current = null;
       const v = viewer;
       viewerRef.current = null;
       if (v) v.dispose().catch(() => {});
@@ -100,7 +108,7 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
       if (kf) {
         v.camera.position.fromArray(kf.position);
         v.camera.quaternion.fromArray(kf.quaternion);
-        syncControlsToCamera(v);
+        flyRef.current?.syncFromCamera();
       }
       return ks;
     });
@@ -145,14 +153,20 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
       const v = viewerRef.current;
       if (!v || ks.length < 2) return;
       stopPlayback();
-      v.controls.enabled = false;
+      const fly = flyRef.current;
+      if (fly) fly.enabled = false;
       setPlaying(true);
       const out = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
       const start = performance.now();
       let raf = 0;
+      const restoreFly = () => {
+        if (fly) {
+          fly.enabled = true;
+          fly.syncFromCamera();
+        }
+      };
       const finish = () => {
-        v.controls.enabled = true;
-        syncControlsToCamera(v);
+        restoreFly();
         setPlaying(false);
         playbackRef.current = null;
         onDone?.();
@@ -171,8 +185,7 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
       };
       const cancel = () => {
         cancelAnimationFrame(raf);
-        v.controls.enabled = true;
-        syncControlsToCamera(v);
+        restoreFly();
       };
       raf = requestAnimationFrame(tick);
       playbackRef.current = { raf, cancel };
@@ -279,7 +292,10 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
       <div className="absolute right-3 top-3 w-72 rounded-lg border border-zinc-700 bg-zinc-950/85 p-4 text-sm text-zinc-200 backdrop-blur">
         <h3 className="mb-2 font-semibold">Drone path</h3>
         <p className="mb-3 text-xs text-zinc-400">
-          Drag to orbit, scroll to zoom, right-drag to pan. Frame a shot, then add a keyframe.
+          <span className="font-medium text-zinc-300">Click scene to fly.</span> Mouse looks
+          (pitch/yaw), <kbd>WASD</kbd> moves, <kbd>Q</kbd>/<kbd>E</kbd> down/up,{" "}
+          <kbd>Shift</kbd> boost, wheel = speed, <kbd>Esc</kbd> releases mouse. Frame a shot,
+          then add a keyframe.
         </p>
         <div className="mb-3 flex gap-2">
           <button onClick={addKeyframe} className="flex-1 rounded bg-blue-600 px-2 py-1.5 font-medium hover:bg-blue-500">
@@ -317,11 +333,8 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
           <select
             defaultValue="0,1,0"
             onChange={(e) => {
-              const v = viewerRef.current;
-              if (!v) return;
               const [x, y, z] = e.target.value.split(",").map(Number);
-              v.camera.up.set(x, y, z);
-              v.controls.update();
+              flyRef.current?.setUp(x, y, z);
             }}
             className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5"
           >
@@ -388,12 +401,4 @@ export default function SplatViewer({ splatUrl, projectId }: Props) {
       </div>
     </div>
   );
-}
-
-// Keep OrbitControls coherent after we move the camera manually: aim the
-// orbit target a couple of meters in front of the camera.
-function syncControlsToCamera(v: GsViewer) {
-  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(v.camera.quaternion);
-  v.controls.target.copy(v.camera.position).addScaledVector(dir, 2);
-  v.controls.update();
 }
