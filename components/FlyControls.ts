@@ -17,6 +17,8 @@ export class FlyControls {
   private vel = new THREE.Vector3();
   private yaw = 0;
   private pitch = 0;
+  private roll = 0; // visual banking only; never part of the tracked orientation
+  private prevYaw = 0;
   private targetYaw = 0;
   private targetPitch = 0;
   private skipNextMove = false; // first event after lock often carries a bogus jump
@@ -119,8 +121,9 @@ export class FlyControls {
   syncFromCamera() {
     const local = this.basis.clone().invert().multiply(this.camera.quaternion);
     const e = new THREE.Euler().setFromQuaternion(local, "YXZ");
-    this.yaw = this.targetYaw = e.y;
+    this.yaw = this.targetYaw = this.prevYaw = e.y;
     this.pitch = this.targetPitch = THREE.MathUtils.clamp(e.x, -1.55, 1.55);
+    this.roll = 0;
     this.applyRotation();
   }
 
@@ -135,7 +138,9 @@ export class FlyControls {
   }
 
   private applyRotation() {
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, "YXZ"));
+    const q = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(this.pitch, this.yaw, this.roll, "YXZ")
+    );
     this.camera.quaternion.copy(this.basis).multiply(q);
   }
 
