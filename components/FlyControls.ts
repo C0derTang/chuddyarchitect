@@ -17,6 +17,9 @@ export class FlyControls {
   private vel = new THREE.Vector3();
   private yaw = 0;
   private pitch = 0;
+  private targetYaw = 0;
+  private targetPitch = 0;
+  private skipNextMove = false; // first event after lock often carries a bogus jump
   private up = new THREE.Vector3(0, 1, 0);
   private basis = new THREE.Quaternion(); // rotates +Y into `up`
   private dragging = false;
@@ -48,13 +51,32 @@ export class FlyControls {
     on<"keyup">(window, "keyup", (e) => this.keys.delete(e.code));
     on<"blur">(window, "blur", () => this.keys.clear());
 
-    // click (without drag) → pointer lock for mouse-look
+    // click (without drag) → pointer lock for mouse-look.
+    // unadjustedMovement disables OS mouse acceleration (raw input) — smoother,
+    // consistent deltas. Falls back where unsupported.
     on<"click">(this.dom, "click", () => {
       if (!this.enabled || this.dragMoved > 4) return;
-      this.dom.requestPointerLock?.();
+      try {
+        const p = (this.dom.requestPointerLock as (o?: object) => Promise<void> | undefined)?.({
+          unadjustedMovement: true,
+        });
+        p?.catch?.(() => this.dom.requestPointerLock());
+      } catch {
+        this.dom.requestPointerLock?.();
+      }
     });
+    const onLockChange = () => {
+      this.skipNextMove = document.pointerLockElement === this.dom;
+    };
+    document.addEventListener("pointerlockchange", onLockChange);
+    this.disposers.push(() => document.removeEventListener("pointerlockchange", onLockChange));
     on<"mousemove">(document, "mousemove", (e) => {
-      if (document.pointerLockElement === this.dom) this.look(e.movementX, e.movementY);
+      if (document.pointerLockElement !== this.dom) return;
+      if (this.skipNextMove) {
+        this.skipNextMove = false;
+        return;
+      }
+      this.look(e.movementX, e.movementY);
     });
 
     // drag-look fallback (works without pointer lock, incl. touch via pointer events)
@@ -97,16 +119,19 @@ export class FlyControls {
   syncFromCamera() {
     const local = this.basis.clone().invert().multiply(this.camera.quaternion);
     const e = new THREE.Euler().setFromQuaternion(local, "YXZ");
-    this.yaw = e.y;
-    this.pitch = THREE.MathUtils.clamp(e.x, -1.55, 1.55);
+    this.yaw = this.targetYaw = e.y;
+    this.pitch = this.targetPitch = THREE.MathUtils.clamp(e.x, -1.55, 1.55);
     this.applyRotation();
   }
 
+  // Mouse events only move the *target*; update() eases the camera toward it
+  // every frame, so look stays smooth even when input events arrive unevenly.
   private look(dx: number, dy: number) {
     if (!this.enabled) return;
-    this.yaw -= dx * this.sensitivity;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * this.sensitivity, -1.55, 1.55);
-    this.applyRotation();
+    // reject spike deltas (pointer-lock glitches on some platforms)
+    if (Math.abs(dx) > 250 || Math.abs(dy) > 250) return;
+    this.targetYaw -= dx * this.sensitivity;
+    this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * this.sensitivity, -1.55, 1.55);
   }
 
   private applyRotation() {
@@ -119,6 +144,13 @@ export class FlyControls {
       this.vel.set(0, 0, 0);
       return;
     }
+    // ease orientation toward target (~50ms time constant: smooths event
+    // stepping without adding noticeable lag)
+    const lookBlend = 1 - Math.exp(-20 * dt);
+    this.yaw += (this.targetYaw - this.yaw) * lookBlend;
+    this.pitch += (this.targetPitch - this.pitch) * lookBlend;
+    this.applyRotation();
+
     const k = this.keys;
     const fwd = (k.has("KeyW") ? 1 : 0) - (k.has("KeyS") ? 1 : 0);
     const right = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0);
