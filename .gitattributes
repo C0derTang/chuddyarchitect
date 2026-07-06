@@ -1,0 +1,4 @@
+# Worker scripts run on Linux (FarmShare) — keep LF even on Windows checkouts
+*.sh text eol=lf
+*.sbatch text eol=lf
+*.py text eol=lf
