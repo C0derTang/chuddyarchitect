@@ -22,15 +22,15 @@ micromamba activate chuddy
 # 3. PyTorch (CUDA 12.1 wheels work on the L40S nodes) + nerfstudio
 pip install --upgrade pip --trusted-host pypi.org --trusted-host files.pythonhosted.org
 
-pip install torch==2.4.1 torchvision==0.19.1 \
+pip install --user torch==2.4.1 torchvision==0.19.1 \
   --index-url https://download.pytorch.org/whl/cu121 \
   --trusted-host download.pytorch.org
 
-pip install gsplat \
+pip install --user gsplat \
   --extra-index-url https://docs.gsplat.studio/whl/pt24cu121 \
   --trusted-host docs.gsplat.studio || pip install gsplat --trusted-host pypi.org --trusted-host files.pythonhosted.org
 
-pip install nerfstudio requests vercel_blob \
+pip install --user nerfstudio requests vercel_blob \
   --trusted-host pypi.org \
   --trusted-host files.pythonhosted.org
 
